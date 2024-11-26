@@ -158,7 +158,6 @@ print(
 # Steps
 # 1: Define the modelling pipeline. Tip: This can simply be a LGBMRegressor based on X_train_t from before.
 # 2. Make sure we are choosing the correct objective for our estimator.
-from lightgbm import LGBMRegressor
 
 lgbm_1 = LGBMRegressor(objective = "tweedie", tweedie_variance_power = 1.5)
 
@@ -276,3 +275,10 @@ ax.legend(loc="upper left")
 plt.plot()
 
 # %%
+## START OF PS 4
+
+## Task 1 - train a constrained LGBM by introducing a monotonicity constraint for BonusMalus and LGBMRegressor, CV this and compare the prediction of constrained vs Unconstrained
+
+# Create a plot of the average claims per BonusMalus group, weight them by exposure. What will/could happen if we do not include a monotonicity constraint?
+
+df["PurePremium"] = df["ClaimAmountCut"] / df["Exposure"]
