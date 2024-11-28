@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from dask_ml.preprocessing import Categorizer
 from glum import GeneralizedLinearRegressor, TweedieDistribution
-from lightgbm import LGBMRegressor
+from lightgbm import LGBMRegressor, plot_metric
 from sklearn.compose import ColumnTransformer
 from sklearn.metrics import auc
 from sklearn.model_selection import GridSearchCV
@@ -158,7 +158,6 @@ print(
 # Steps
 # 1: Define the modelling pipeline. Tip: This can simply be a LGBMRegressor based on X_train_t from before.
 # 2. Make sure we are choosing the correct objective for our estimator.
-from lightgbm import LGBMRegressor
 
 lgbm_1 = LGBMRegressor(objective = "tweedie", tweedie_variance_power = 1.5)
 
@@ -275,4 +274,104 @@ ax.set(
 ax.legend(loc="upper left")
 plt.plot()
 
+# %%
+## START OF PS 4
+
+## Task 1 - train a constrained LGBM by introducing a monotonicity constraint for BonusMalus and LGBMRegressor, CV this and compare the prediction of constrained vs Unconstrained
+
+# Create a plot of the average claims per BonusMalus group, weight them by exposure. What will/could happen if we do not include a monotonicity constraint?
+# Create a plot of the average claims per BonusMalus group, weighted by exposure
+avg_claims_per_group = df.groupby("BonusMalus").apply(
+    lambda x: np.average(x["PurePremium"], weights=x["Exposure"])
+)
+
+plt.figure(figsize=(10, 6))
+plt.plot(avg_claims_per_group.index, avg_claims_per_group.values, marker='o')
+plt.xlabel("BonusMalus")
+plt.ylabel("Average Claims (Weighted by Exposure)")
+plt.title("Average Claims per BonusMalus Group")
+plt.grid(True)
+plt.show()
+
+# %%
+# Create a new model pipeline or estimator called constraine_lgbm, introduce a monotonicity constraint for BonusMalus.
+# Define the model pipeline
+monotone_constraints = [1] * 7 + [0] * (64 - 7) #note that this needs to be of the size for after prepocessing
+constrained_lgbm = LGBMRegressor(objective="tweedie", tweedie_variance_power=1.5, mc = monotone_constraints,  monotone_constraints_method="basic")
+model_pipeline = Pipeline(
+    # TODO: Define pipeline steps here
+    steps = [("preprocessor", preprocessor),
+             ("model", constrained_lgbm)])
+
+model_pipeline.fit(X_train_t, y_train_t, model__sample_weight=w_train_t)
+# %%
+# Cross validate and predict using the es estimator, save the predictions in pp_t_lgbm_constrained
+cv = GridSearchCV(estimator=model_pipeline, param_grid=param_grid, cv=3, scoring='neg_mean_squared_error', verbose=1)
+cv.fit(X_train_t, y_train_t, model__sample_weight=w_train_t)
+
+df_train["pp_t_lgbm_constrained"] = cv.best_estimator_.predict(X_train_t)
+df_test["pp_t_lgbm_constrained"] = cv.best_estimator_.predict(X_test_t)
+
+
+print(
+    "training loss t_lgbm_constrained:  {}".format(
+        TweedieDist.deviance(y_train_t, df_train["pp_t_lgbm_constrained"], sample_weight=w_train_t)
+        / np.sum(w_train_t)
+    )
+)
+
+print(
+    "testing loss t_lgbm_constrained:  {}".format(
+        TweedieDist.deviance(y_test_t, df_test["pp_t_lgbm_constrained"], sample_weight=w_test_t)
+        / np.sum(w_test_t)
+    )
+)
+
+print(
+    "Total claim amount on test set, observed = {}, predicted = {}".format(
+        df["ClaimAmountCut"].values[test].sum(),
+        np.sum(df["Exposure"].values[test] * df_test["pp_t_lgbm_constrained"]),
+    )
+)
+
+# compare the training loss results
+'''
+tuned unconstrained lgbm
+training loss t_lgbm:  67.99717663819501
+testing loss t_lgbm:  73.83532107032258
+
+tuned constrained
+training loss t_lgbm_constrained:  69.10954624624668
+testing loss t_lgbm_constrained:  74.16978686840706
+
+The constrained model has slightly higher training loss compared to the unconstrained model. 
+This is expected because the monotonic constraints restrict the model's flexibility, preventing it from fully optimizing for the training data.
+'''
+# %%
+# Task 2 - based upon the cv constrained optimizer, plot a learning curve which shows the convergence of the score on the train and test set
+best_params = {'learning_rate': 0.1, 'n_estimators': 50} #from previous cv
+monotone_constraints = [0,0,0,0,0,0,0,1,0]
+eval_constrained_lgbm = LGBMRegressor(objective="tweedie", tweedie_variance_power=1.5, monotone_constraints=monotone_constraints, monotone_constraints_method="basic", **best_params)
+
+eval_constrained_lgbm.fit(X_train_t, y_train_t, sample_weight=w_train_t, eval_set=[(X_train_t, y_train_t), (X_test_t, y_test_t)], eval_names=["train", "test"], eval_metric='l2')
+
+# Plot learning curve using LightGBM's built-in function
+plot_metric(eval_constrained_lgbm, metric='l2')
+plt.title("Learning Curve")
+plt.show()
+
+# %%
+best_params = {'learning_rate': 0.1, 'n_estimators': 50} #from previous cv
+monotone_constraints = [1] * 7 + [0] * (64 - 7) #note that this needs to be of the size for after prepocessing
+eval_set = [(X_train_t, y_train_t), (X_test_t, y_test_t)]
+constrained_lgbm = LGBMRegressor(objective="tweedie", tweedie_variance_power=1.5, monotone_constraints=monotone_constraints, monotone_constraints_method="basic", **best_params)
+model_pipeline = Pipeline(
+    steps=[("preprocessor", preprocessor),
+           ("model", constrained_lgbm)])
+
+model_pipeline.fit(X_train_t, y_train_t, model__sample_weight=w_train_t, model__eval_set = eval_set, model__eval_metric= 'l2')
+
+plot_metric(constrained_lgbm, metric='l2')
+plt.title("Learning Curve")
+plt.show()
 # %%
